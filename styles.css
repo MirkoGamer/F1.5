@@ -777,6 +777,172 @@
             letter-spacing: 0.5px;
         }
 
+        /* SKELETON LOADING ANIMATION */
+        @keyframes shimmer {
+            0% { background-position: -1000px 0; }
+            100% { background-position: 1000px 0; }
+        }
+
+        .skeleton-loader {
+            background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%);
+            background-size: 1000px 100%;
+            animation: shimmer 2s infinite linear;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .skeleton-row { height: 38px; width: 100%; margin-bottom: 8px; }
+        .skeleton-title { height: 28px; width: 40%; margin-bottom: 20px; }
+        .skeleton-cell { height: 16px; width: 80%; margin: 0 auto; }
+        
+        .loading-placeholder {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 10px;
+        }
+
+        /* DETALLE GP FIN DE SEMANA */
+        .back-btn {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-soft);
+            color: var(--text-muted);
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+        .back-btn:hover { background: var(--accent-red); color: #fff; border-color: var(--accent-red); }
+
+        .gp-session-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border-soft);
+            overflow-x: auto;
+        }
+        .session-tab-btn {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border-soft);
+            color: var(--text-muted);
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+        .session-tab-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+        .session-tab-btn.active {
+            background: var(--accent-red);
+            color: #fff;
+            border-color: var(--accent-red);
+            box-shadow: 0 4px 12px rgba(var(--accent-red-rgb), 0.2);
+        }
+
+        .session-result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .gp-session-date-badge {
+            background: rgba(var(--accent-f15-rgb), 0.1);
+            color: var(--accent-f15);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 800;
+        }
+
+        /* CRONOGRAMA RESUMEN */
+        .gp-schedule-summary {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-soft);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+        .schedule-summary-grid { display: flex; gap: 40px; flex-wrap: wrap; }
+        .schedule-day-column { flex: 1; min-width: 140px; }
+        .schedule-day-name {
+            color: var(--accent-red);
+            font-size: 0.7rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            padding-bottom: 5px;
+        }
+        .schedule-event { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            font-size: 0.82rem; 
+            margin-bottom: 8px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        .schedule-event.is-next {
+            background: rgba(var(--accent-amber), 0.1);
+            border: 1px solid rgba(var(--accent-amber), 0.2);
+        }
+        .event-label { color: var(--text-soft); font-weight: 600; }
+        .event-time { color: var(--text-muted); font-family: monospace; font-size: 0.75rem; }
+        .session-status-pill {
+            font-size: 0.6rem;
+            padding: 2px 6px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            font-weight: 800;
+        }
+        .status-finished { color: var(--accent-green); background: rgba(22, 199, 132, 0.1); }
+        .status-scheduled { color: var(--text-subtle); background: rgba(255, 255, 255, 0.05); }
+        .status-today { color: var(--accent-red); background: rgba(var(--accent-red-rgb), 0.1); }
+
+        /* OVERLAY CUENTA ATRÁS FULL SECTOR */
+        .live-race-countdown-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, rgba(7, 9, 13, 0.98) 0%, #07090d 100%);
+            z-index: 1000;
+            display: none; /* Cambiado a flex por JS */
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            backdrop-filter: blur(15px);
+            border: 1px solid var(--border-soft);
+            text-align: center;
+            padding: 40px;
+            transition: opacity 1s ease-in-out;
+            opacity: 1;
+        }
+
+        .live-race-countdown-overlay.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .countdown-big-timer {
+            font-family: 'Courier New', monospace;
+            font-size: 4rem;
+            font-weight: 900;
+            color: var(--accent-amber);
+            text-shadow: 0 0 20px rgba(246, 183, 60, 0.3);
+            margin: 20px 0;
+        }
+
         /* Scrollable panels */
         .live-panel-scroll {
             max-height: 320px;
@@ -931,6 +1097,204 @@
         .tabla-matriz tr:hover td,
         .modal-temp-tabla tr:hover td {
             background: rgba(255, 255, 255, 0.045);
+        }
+
+        /* ═══════════════════════════════════════════════════════════════
+           CALENDARIO MEJORADO — Carreras futuras, countdown, widget
+           ═══════════════════════════════════════════════════════════════ */
+
+        /* Barra de estado del calendario */
+        .calendario-estado-bar {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .estado-pill {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.05);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+        .estado-pill.completadas { color: var(--accent-green); border-color: rgba(22,199,132,0.15); }
+        .estado-pill.proxima     { color: var(--accent-amber); border-color: rgba(246,183,60,0.15); }
+        .estado-pill.restantes   { color: var(--text-muted); }
+
+        /* Items de carrera por estado */
+        .item-carrera.sin-datos {
+            color: var(--text-subtle);
+            cursor: default;
+            opacity: 0.6;
+        }
+        .item-carrera.sin-datos:hover {
+            background: transparent;
+            padding-left: 10px;
+            color: var(--text-subtle);
+        }
+        .item-carrera.proxima-carrera {
+            border-left: 3px solid var(--accent-amber);
+            background: rgba(246, 183, 60, 0.06);
+            color: var(--text-main);
+            animation: proximaPulse 3s ease-in-out infinite;
+        }
+        @keyframes proximaPulse {
+            0%, 100% { background: rgba(246, 183, 60, 0.04); }
+            50%      { background: rgba(246, 183, 60, 0.09); }
+        }
+        .item-carrera.futura {
+            color: var(--text-subtle);
+            cursor: default;
+        }
+        .item-carrera.futura:hover {
+            background: rgba(255,255,255,0.015);
+            padding-left: 10px;
+            color: var(--text-muted);
+        }
+        .item-carrera.futura .futura-fecha {
+            display: block;
+            font-size: 0.7rem;
+            color: var(--text-subtle);
+            margin-top: 2px;
+            font-weight: 500;
+        }
+
+        /* Badge countdown */
+        .badge-countdown {
+            background: rgba(246, 183, 60, 0.12);
+            color: var(--accent-amber);
+            font-size: 0.6rem;
+            font-weight: 800;
+            padding: 2px 7px;
+            border-radius: 3px;
+            margin-left: auto;
+            white-space: nowrap;
+        }
+        .badge-countdown.urgente {
+            background: rgba(225, 6, 0, 0.12);
+            color: var(--accent-red);
+            animation: blink 2s infinite;
+        }
+
+        /* Separadores de zona */
+        .carrera-separador {
+            font-size: 0.6rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-subtle);
+            padding: 10px 10px 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            margin-bottom: 4px;
+            pointer-events: none;
+        }
+
+        /* Widget próximo GP */
+        .widget-proximo-gp {
+            width: 100%;
+            padding: 18px 22px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border-left: 4px solid var(--accent-amber);
+            background: linear-gradient(90deg, rgba(246,183,60,0.08) 0%, rgba(12,16,23,0.84) 60%);
+            position: relative;
+            overflow: hidden;
+        }
+        .widget-proximo-gp::before {
+            content: '';
+            position: absolute;
+            top: -40px;
+            right: -40px;
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(246,183,60,0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .widget-proximo-gp .proximo-label {
+            font-size: 0.65rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--accent-amber);
+            margin-bottom: 4px;
+        }
+        .widget-proximo-gp .proximo-titulo {
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: #ffffff;
+            margin: 0;
+        }
+        .widget-proximo-gp .proximo-sub {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+            font-weight: 500;
+        }
+        .widget-proximo-gp .proximo-fecha {
+            font-size: 0.75rem;
+            color: var(--text-subtle);
+            margin-top: 2px;
+        }
+        .widget-proximo-gp .proximo-countdown {
+            position: absolute;
+            top: 50%;
+            right: 22px;
+            transform: translateY(-50%);
+            background: rgba(246, 183, 60, 0.1);
+            border: 1px solid rgba(246, 183, 60, 0.2);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 800;
+            color: var(--accent-amber);
+            text-align: center;
+        }
+        .widget-proximo-gp .proximo-countdown.urgente {
+            background: rgba(225, 6, 0, 0.1);
+            border-color: rgba(225, 6, 0, 0.25);
+            color: var(--accent-red);
+        }
+        .widget-proximo-gp .proximo-countdown span {
+            display: block;
+            font-size: 0.6rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        /* Sprint items por estado */
+        .item-carrera.sprint-futura {
+            color: var(--text-subtle);
+            cursor: default;
+            padding-left: 22px;
+        }
+        .item-carrera.sprint-futura:hover {
+            background: rgba(255,255,255,0.015);
+            padding-left: 24px;
+            color: var(--text-muted);
+        }
+        .item-carrera.sprint-proxima {
+            border-left: 3px solid var(--accent-amber);
+            background: rgba(246, 183, 60, 0.06);
+            color: var(--text-main);
+            padding-left: 22px;
+        }
+
+        /* Responsive widget */
+        @media (max-width: 600px) {
+            .widget-proximo-gp .proximo-countdown {
+                position: static;
+                transform: none;
+                margin-top: 10px;
+                display: inline-block;
+            }
         }
 
         .tag-f15,

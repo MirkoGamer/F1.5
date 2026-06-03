@@ -7,6 +7,7 @@
         
         let pilotoVivoEnfocado = null;
         let intervalLive = null;
+        let intervalCountdownLive = null;
         let modoLiveActual = 'f1';
         let liveDriversCache = null;
         let liveSessionCache = null;
@@ -24,6 +25,13 @@
         let pilotoPerfilActual = null;
         const perfilTemporadasCache = {};
         const ANIO_ACTUAL_VISIBLE = new Date().getFullYear();
+
+        // CACHE DEL SCHEDULE COMPLETO (carreras pasadas + futuras)
+        let scheduleCache = [];
+        let proximaCarreraIndex = -1;
+        
+        // CACHE DE RESULTADOS DE SESIÓN (Evita re-fetch)
+        const gpResultadosCache = {};
 
         // CONSTANTES DEL SISTEMA DE PUNTUACIÓN
         const PUNTOS_CARRERA = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
@@ -54,6 +62,15 @@
             "American-Italian": "us", "Liechtensteiner": "li", "Moroccan": "ma"
         };
 
+        // DICCIONARIO PARA BANDERAS POR PAÍS (GP Detail)
+        const MAPA_BANDERAS_PAISES = {
+            "Australia": "au", "Bahrain": "bh", "Saudi Arabia": "sa", "Azerbaijan": "az", "USA": "us", "United States": "us",
+            "Monaco": "mc", "Spain": "es", "Canada": "ca", "Austria": "at", "UK": "gb", "United Kingdom": "gb",
+            "Hungary": "hu", "Belgium": "be", "Netherlands": "nl", "Italy": "it", "Singapore": "sg", "Japan": "jp",
+            "Qatar": "qa", "Mexico": "mx", "Brazil": "br", "UAE": "ae", "China": "cn", "France": "fr", "Russia": "ru",
+            "Portugal": "pt", "Turkey": "tr", "Germany": "de"
+        };
+
         function obtenerAbvCircuito(race) {
             const id = race.Circuit.circuitId;
             if (MAPA_CIRCUITOS[id]) return MAPA_CIRCUITOS[id];
@@ -68,6 +85,93 @@
             const codigo = obtenerCodigoBandera(nacionalidad);
             if (!codigo) return '';
             return `<img class="banderita" src="https://flagcdn.com/w20/${codigo}.png" alt="${nacionalidad}">`;
+        }
+
+        function generarBanderaGPImg(pais) {
+            const codigo = MAPA_BANDERAS_PAISES[pais] || "";
+            if (!codigo) return '';
+            return `<img src="https://flagcdn.com/w40/${codigo}.png" alt="${pais}" style="border-radius:4px; box-shadow: 0 2px 8px rgba(0,0,0,0.4);">`;
+        }
+
+        // ─── SCHEDULE COMPLETO (pasadas + futuras) ───
+        async function obtenerScheduleCompleto(ano) {
+            const url = `https://api.jolpi.ca/ergast/f1/${ano}.json`;
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`Schedule API error ${res.status}`);
+                const data = await res.json();
+                return data.MRData?.RaceTable?.Races || [];
+            } catch (err) {
+                console.warn('Error cargando schedule:', err);
+                return [];
+            }
+        }
+
+        function calcularCountdown(fechaCarreraUTC) {
+            const ahora = new Date();
+            const diffMs = fechaCarreraUTC - ahora;
+            if (diffMs <= 0) return { texto: 'HOY', urgente: true };
+            const dias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            const horas = Math.floor(diffMs / (1000 * 60 * 60));
+            if (dias === 0) {
+                if (horas <= 1) return { texto: 'HOY', urgente: true };
+                if (horas < 24) return { texto: `EN ${horas}H`, urgente: true };
+                return { texto: 'MAÑANA', urgente: true };
+            }
+            if (dias === 1) return { texto: 'MAÑANA', urgente: true };
+            if (dias < 7) return { texto: `EN ${dias} DÍAS`, urgente: true };
+            return { texto: `EN ${dias} DÍAS`, urgente: false };
+        }
+
+        function formatearFechaSidebar(dateStr, timeStr) {
+            try {
+                const d = new Date(`${dateStr}T${timeStr || '00:00:00Z'}`);
+                const meses = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                return `${d.getDate()} ${meses[d.getMonth()]} ${d.getFullYear()}`;
+            } catch { return dateStr; }
+        }
+
+        function formatearFechaWidget(dateStr, timeStr) {
+            try {
+                const d = new Date(`${dateStr}T${timeStr || '00:00:00Z'}`);
+                const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+                const diasSem = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+                const hora = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+                return `${diasSem[d.getDay()]}, ${d.getDate()} de ${meses[d.getMonth()]} · ${hora}`;
+            } catch { return dateStr; }
+        }
+
+        function encontrarProximaCarrera(schedule) {
+            const ahora = new Date();
+            for (let i = 0; i < schedule.length; i++) {
+                const fecha = new Date(`${schedule[i].date}T${schedule[i].time || '00:00:00Z'}`);
+                if (fecha > ahora) return i;
+            }
+            return -1;
+        }
+
+        function renderizarWidgetProximoGP(carrera, diasInfo) {
+            const widget = document.getElementById('widget-proximo-gp');
+            if (!carrera || anioActual !== 'current') {
+                widget.style.display = 'none';
+                return;
+            }
+            const flag = carrera.Circuit?.Location?.country
+                ? generarBanderaImg(carrera.Circuit.Location.country.substring(0, 3).toUpperCase())
+                : '';
+            const circuito = carrera.Circuit?.circuitName || '';
+            const localidad = carrera.Circuit?.Location?.locality || '';
+            const pais = carrera.Circuit?.Location?.country || '';
+            const fechaStr = formatearFechaWidget(carrera.date, carrera.time);
+            const urgenteClass = diasInfo.urgente ? 'urgente' : '';
+            widget.innerHTML = `
+                <div class="proximo-label">Próximo Gran Premio</div>
+                <div class="proximo-titulo">${carrera.raceName}</div>
+                <div class="proximo-sub">${circuito} · ${localidad}, ${pais}</div>
+                <div class="proximo-fecha">${fechaStr}</div>
+                <div class="proximo-countdown ${urgenteClass}">${diasInfo.texto}<span>FALTAN</span></div>
+            `;
+            widget.style.display = 'block';
         }
 
         async function obtenerCarrerasPaginadas(urlBase, campoResultados) {
@@ -119,6 +223,15 @@
             return Array.from(carrerasPorRonda.values()).sort((a, b) => Number(a.round) - Number(b.round));
         }
 
+        function generarSkeletonTabla(filas = 10) {
+            let html = '<div class="loading-placeholder">';
+            html += '<div class="skeleton-loader skeleton-title"></div>';
+            for(let i=0; i<filas; i++) {
+                html += `<div class="skeleton-loader skeleton-row" style="opacity: ${1 - (i*0.08)}"></div>`;
+            }
+            return html + '</div>';
+        }
+
         function esEquipoExcluidoF15(nombreEscuderia) {
             if (!nombreEscuderia) return false;
             const excluidos = ['ferrari', 'mclaren', 'mercedes', 'red bull'];
@@ -140,27 +253,53 @@
             const tabDashboard = document.getElementById('apartado-dashboard');
             const tabDetallado = document.getElementById('apartado-detallado');
             const tabEnVivo = document.getElementById('apartado-envivo');
+            const tabDetalleGP = document.getElementById('apartado-detalle-gp');
+
             const btnDash = document.getElementById('nav-tab-dashboard');
             const btnDet = document.getElementById('nav-tab-detallado');
             const btnLive = document.getElementById('nav-tab-envivo');
             
+            const params = new URLSearchParams(window.location.search);
+            if (seccion === 'dashboard' && !params.get('gp')) {
+                // Si volvemos al dashboard, limpiar URL
+                window.history.replaceState({}, '', window.location.pathname);
+            }
+
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+
+            // Bloquear acceso a En Vivo si no es la temporada actual
+            if (seccion === 'envivo' && anioActual !== 'current') {
+                seccion = 'dashboard';
+            }
+
+            // Auto-retorno si el GP ya no existe en la temporada seleccionada
+            if (seccion === 'detalle-gp' && gpActualFull) {
+                const existeEnSeason = scheduleCache.some(c => c.round === gpActualFull.round);
+                if (!existeEnSeason) seccion = 'dashboard';
+            }
+
             // Detener updates si salimos de vivo
             if (intervalLive) { clearInterval(intervalLive); intervalLive = null; }
+            if (intervalCountdownLive) { clearInterval(intervalCountdownLive); intervalCountdownLive = null; }
 
-            [tabDashboard, tabDetallado, tabEnVivo].forEach(t => t.style.display = 'none');
-            [btnDash, btnDet, btnLive].forEach(b => b.classList.remove('active'));
+            [tabDashboard, tabDetallado, tabEnVivo, tabDetalleGP]
+                .filter(Boolean)
+                .forEach(t => t.style.display = 'none');
+            [btnDash, btnDet, btnLive].filter(Boolean).forEach(b => b.classList.remove('active'));
 
             if (seccion === 'dashboard') {
-                tabDashboard.style.display = 'flex';
-                btnDash.classList.add('active');
+                if (tabDashboard) tabDashboard.style.display = 'flex';
+                if (btnDash) btnDash.classList.add('active');
             } else if (seccion === 'detallado') {
-                tabDetallado.style.display = 'flex';
-                btnDet.classList.add('active');
-                renderizarMatricesDetalladas();
+                if (tabDetallado) tabDetallado.style.display = 'flex';
+                if (btnDet) btnDet.classList.add('active');
+                setTimeout(renderizarMatricesDetalladas, 50); // Dar respiro al UI
             } else if (seccion === 'envivo') {
-                tabEnVivo.style.display = 'flex';
-                btnLive.classList.add('active');
+                if (tabEnVivo) tabEnVivo.style.display = 'flex';
+                if (btnLive) btnLive.classList.add('active');
                 iniciarLiveUpdates();
+            } else if (seccion === 'detalle-gp') {
+                if (tabDetalleGP) tabDetalleGP.style.display = 'flex';
             }
         }
 
@@ -188,104 +327,51 @@
             }
         }
 
-        // FUNCIONES AUXILIARES PARA EL CÁLCULO CELDA POR CELDA EN LAS MATRICES DETALLADAS
-        function calcularPuntosMortalEnCarrera(driverId, round) {
-            let puntos = 0;
-            const carrera = carrerasCache.find(c => c.round === round);
-            if (carrera && carrera.Results) {
-                let posF15 = 0;
-                for (let res of carrera.Results) {
-                    if (!esEquipoExcluidoF15(res.Constructor.name)) {
-                        if (res.Driver.driverId === driverId) {
-                            if (posF15 < PUNTOS_CARRERA.length) puntos += PUNTOS_CARRERA[posF15];
-                            break;
-                        }
-                        posF15++;
-                    }
-                }
-            }
-            const sprint = sprintsCache.find(s => s.round === round);
-            if (sprint && sprint.SprintResults) {
-                let posF15 = 0;
-                for (let res of sprint.SprintResults) {
-                    if (!esEquipoExcluidoF15(res.Constructor.name)) {
-                        if (res.Driver.driverId === driverId) {
-                            if (posF15 < PUNTOS_SPRINT.length) puntos += PUNTOS_SPRINT[posF15];
-                            break;
-                        }
-                        posF15++;
-                    }
-                }
-            }
-            return puntos;
-        }
-
-        function calcularPuntosF1OficialEnCarrera(driverId, round) {
-            let puntos = 0;
-            const carrera = carrerasCache.find(c => c.round === round);
-            if (carrera && carrera.Results) {
-                const res = carrera.Results.find(r => r.Driver.driverId === driverId);
-                if (res) puntos += parseFloat(res.points) || 0;
-            }
-            const sprint = sprintsCache.find(s => s.round === round);
-            if (sprint && sprint.SprintResults) {
-                const res = sprint.SprintResults.find(r => r.Driver.driverId === driverId);
-                if (res) puntos += parseFloat(res.points) || 0;
-            }
-            return puntos;
-        }
-
-        function calcularPuntosMortalConstructorEnCarrera(teamName, round) {
-            let puntos = 0;
-            const carrera = carrerasCache.find(c => c.round === round);
-            if (carrera && carrera.Results) {
-                let posF15 = 0;
-                carrera.Results.forEach(res => {
-                    if (!esEquipoExcluidoF15(res.Constructor.name)) {
-                        if (res.Constructor.name === teamName && posF15 < PUNTOS_CARRERA.length) {
-                            puntos += PUNTOS_CARRERA[posF15];
-                        }
-                        posF15++;
-                    }
-                });
-            }
-            const sprint = sprintsCache.find(s => s.round === round);
-            if (sprint && sprint.SprintResults) {
-                let posF15 = 0;
-                sprint.SprintResults.forEach(res => {
-                    if (!esEquipoExcluidoF15(res.Constructor.name)) {
-                        if (res.Constructor.name === teamName && posF15 < PUNTOS_SPRINT.length) {
-                            puntos += PUNTOS_SPRINT[posF15];
-                        }
-                        posF15++;
-                    }
-                });
-            }
-            return puntos;
-        }
-
-        function calcularPuntosF1OficialConstructorEnCarrera(teamName, round) {
-            let puntos = 0;
-            const carrera = carrerasCache.find(c => c.round === round);
-            if (carrera && carrera.Results) {
-                carrera.Results.forEach(res => {
-                    if (res.Constructor.name === teamName) puntos += parseFloat(res.points) || 0;
-                });
-            }
-            const sprint = sprintsCache.find(s => s.round === round);
-            if (sprint && sprint.SprintResults) {
-                sprint.SprintResults.forEach(res => {
-                    if (res.Constructor.name === teamName) puntos += parseFloat(res.points) || 0;
-                });
-            }
-            return puntos;
-        }
-
         // RENDERIZADO TOTALMENTE DINÁMICO DE LAS MATRICES DETALLADAS
         function renderizarMatricesDetalladas() {
             const contenedorF15 = document.getElementById('matriz-f15-container');
             const contenedorF1 = document.getElementById('matriz-f1-container');
+
+            contenedorF15.innerHTML = generarSkeletonTabla(15);
+            contenedorF1.innerHTML = generarSkeletonTabla(15);
+
+            // Pre-procesar puntos en un Map para evitar O(n^3)
+            const puntosMap = { f15: {}, f1: {}, f15C: {}, f1C: {} };
             
+            carrerasCache.forEach(c => {
+                const r = c.round;
+                let posF15 = 0;
+                c.Results?.forEach(res => {
+                    const dId = res.Driver.driverId;
+                    const cName = res.Constructor.name;
+                    puntosMap.f1[`${dId}-${r}`] = (puntosMap.f1[`${dId}-${r}`] || 0) + (parseFloat(res.points) || 0);
+                    puntosMap.f1C[`${cName}-${r}`] = (puntosMap.f1C[`${cName}-${r}`] || 0) + (parseFloat(res.points) || 0);
+                    
+                    if (!esEquipoExcluidoF15(cName)) {
+                        const pts = posF15 < PUNTOS_CARRERA.length ? PUNTOS_CARRERA[posF15] : 0;
+                        puntosMap.f15[`${dId}-${r}`] = pts;
+                        puntosMap.f15C[`${cName}-${r}`] = (puntosMap.f15C[`${cName}-${r}`] || 0) + pts;
+                        posF15++;
+                    }
+                });
+
+                const s = sprintsCache.find(sp => sp.round === r);
+                let posF15S = 0;
+                s?.SprintResults?.forEach(res => {
+                    const dId = res.Driver.driverId;
+                    const cName = res.Constructor.name;
+                    puntosMap.f1[`${dId}-${r}`] = (puntosMap.f1[`${dId}-${r}`] || 0) + (parseFloat(res.points) || 0);
+                    puntosMap.f1C[`${cName}-${r}`] = (puntosMap.f1C[`${cName}-${r}`] || 0) + (parseFloat(res.points) || 0);
+
+                    if (!esEquipoExcluidoF15(cName)) {
+                        const pts = posF15S < PUNTOS_SPRINT.length ? PUNTOS_SPRINT[posF15S] : 0;
+                        puntosMap.f15[`${dId}-${r}`] = (puntosMap.f15[`${dId}-${r}`] || 0) + pts;
+                        puntosMap.f15C[`${cName}-${r}`] = (puntosMap.f15C[`${cName}-${r}`] || 0) + pts;
+                        posF15S++;
+                    }
+                });
+            });
+
             contenedorF15.innerHTML = '';
             contenedorF1.innerHTML = '';
 
@@ -307,7 +393,7 @@
                 f15PilotosCache.forEach(p => {
                     htmlF15 += `<tr><td class="col-fija">${p.name}</td>`;
                     carrerasCache.forEach(c => {
-                        let ptsRonda = calcularPuntosMortalEnCarrera(p.id, c.round); 
+                        let ptsRonda = puntosMap.f15[`${p.id}-${c.round}`] || 0;
                         htmlF15 += `<td class="celda-puntos ${ptsRonda > 0 ? 'pts-alto' : 'pts-cero'}">${ptsRonda > 0 ? ptsRonda : '-'}</td>`;
                     });
                     htmlF15 += `<td style="background:rgba(225,6,0,0.15); font-weight:800;">${p.pts}</td></tr>`;
@@ -321,7 +407,7 @@
                     const nombre = `${p.Driver.givenName} ${p.Driver.familyName}`;
                     htmlF1 += `<tr><td class="col-fija">${nombre}</td>`;
                     carrerasCache.forEach(c => {
-                        let ptsRonda = calcularPuntosF1OficialEnCarrera(p.Driver.driverId, c.round);
+                        let ptsRonda = puntosMap.f1[`${p.Driver.driverId}-${c.round}`] || 0;
                         htmlF1 += `<td class="celda-puntos ${ptsRonda > 0 ? 'pts-alto' : 'pts-cero'}">${ptsRonda > 0 ? ptsRonda : '-'}</td>`;
                     });
                     htmlF1 += `<td style="background:rgba(56,189,248,0.15); font-weight:800;">${p.points}</td></tr>`;
@@ -336,7 +422,7 @@
                 f15Campeonato.listaConst.forEach(team => {
                     htmlF15 += `<tr><td class="col-fija">${team.team}</td>`;
                     carrerasCache.forEach(c => {
-                        let ptsRonda = calcularPuntosMortalConstructorEnCarrera(team.team, c.round);
+                        let ptsRonda = puntosMap.f15C[`${team.team}-${c.round}`] || 0;
                         htmlF15 += `<td class="celda-puntos ${ptsRonda > 0 ? 'pts-alto' : 'pts-cero'}">${ptsRonda > 0 ? ptsRonda : '-'}</td>`;
                     });
                     htmlF15 += `<td style="background:rgba(225,6,0,0.15); font-weight:800;">${team.pts}</td></tr>`;
@@ -349,7 +435,7 @@
                 f1ConstCache.forEach(cTeam => {
                     htmlF1 += `<tr><td class="col-fija">${cTeam.Constructor.name}</td>`;
                     carrerasCache.forEach(c => {
-                        let ptsRonda = calcularPuntosF1OficialConstructorEnCarrera(cTeam.Constructor.name, c.round);
+                        let ptsRonda = puntosMap.f1C[`${cTeam.Constructor.name}-${c.round}`] || 0;
                         htmlF1 += `<td class="celda-puntos ${ptsRonda > 0 ? 'pts-alto' : 'pts-cero'}">${ptsRonda > 0 ? ptsRonda : '-'}</td>`;
                     });
                     htmlF1 += `<td style="background:rgba(56,189,248,0.15); font-weight:800;">${cTeam.points}</td></tr>`;
@@ -364,17 +450,28 @@
             if(infoDiv) infoDiv.innerHTML = `Sincronizando registros año ${ano === 'current' ? ANIO_ACTUAL_VISIBLE : ano}...`;
 
             anioActual = ano;
+            
+            // Gestión del botón En Vivo y redirección
+            const btnLive = document.getElementById('nav-tab-envivo');
+            if (ano !== 'current') {
+                btnLive.classList.add('disabled');
+                cambiarApartado('dashboard'); // Forzar salida de En Vivo si el usuario estaba ahí
+            } else {
+                btnLive.classList.remove('disabled');
+            }
+
             const urlPilotos = `https://api.jolpi.ca/ergast/f1/${ano}/driverStandings.json`;
             const urlConst = `https://api.jolpi.ca/ergast/f1/${ano}/constructorStandings.json`;
             const urlResultados = `https://api.jolpi.ca/ergast/f1/${ano}/results.json`;
             const urlSprints = `https://api.jolpi.ca/ergast/f1/${ano}/sprint.json`;
 
             try {
-                const [resP, resC, carreras, sprints] = await Promise.all([
+                const [resP, resC, carreras, sprints, schedule] = await Promise.all([
                     fetch(urlPilotos),
                     fetch(urlConst),
                     obtenerCarrerasPaginadas(urlResultados, 'Results'),
-                    obtenerCarrerasPaginadas(urlSprints, 'SprintResults')
+                    obtenerCarrerasPaginadas(urlSprints, 'SprintResults'),
+                    obtenerScheduleCompleto(ano)
                 ]);
 
                 const dPilotos = await resP.json();
@@ -382,6 +479,7 @@
 
                 carrerasCache = carreras;
                 sprintsCache = sprints;
+                scheduleCache = schedule;
 
                 f1PilotosCache = dPilotos.MRData.StandingsTable.StandingsLists[0]?.DriverStandings || [];
                 f1ConstCache = dConst.MRData.StandingsTable.StandingsLists[0]?.ConstructorStandings || [];
@@ -390,12 +488,17 @@
                 f15PilotosCache = f15Calculado.listaPilotos;
 
                 renderizarTablasDashboard(f1PilotosCache, f15PilotosCache, f1ConstCache, f15Calculado.listaConst);
-                
-                const tituloSidebar = document.querySelector('#sidebar-carreras h3');
-                if(tituloSidebar) tituloSidebar.innerText = ` Calendario ${ano === 'current' ? ANIO_ACTUAL_VISIBLE : ano}`;
 
-                generarMenuCarreras(carrerasCache, sprintsCache);
+                const tituloSidebar = document.querySelector('#sidebar-carreras h3');
+                if(tituloSidebar) tituloSidebar.innerText = `Calendario ${ano === 'current' ? ANIO_ACTUAL_VISIBLE : ano}`;
+
+                generarMenuCarrerasMejorado(scheduleCache, carrerasCache, sprintsCache);
                 generarTablaCronica(carrerasCache, sprintsCache);
+
+                // Ocultar widget de próximo GP en temporadas históricas
+                if (ano !== 'current') {
+                    document.getElementById('widget-proximo-gp').style.display = 'none';
+                }
 
                 if(infoDiv) {
                     infoDiv.innerHTML = ` Sincronizado: Historial (${ano === 'current' ? ANIO_ACTUAL_VISIBLE : ano}) Activo`;
@@ -629,187 +732,461 @@
             cronicaBody.innerHTML = htmlCronica;
         }
 
-        // RE-DISEÑO DEL MENÚ IZQUIERDO RECORRIENDO DE FORMA DINÁMICA EL 100% DEL CALENDARIO
-        function generarMenuCarreras(carreras, sprints) {
+        // ═══════════════════════════════════════════════════════════════
+        // MENÚ IZQUIERDO MEJORADO — Carreras pasadas + futuras
+        // ═══════════════════════════════════════════════════════════════
+        function generarMenuCarrerasMejorado(schedule, carreras, sprints) {
             const listaUl = document.getElementById('lista-carreras');
             const panelDetalle = document.getElementById('detalle-carrera-panel');
             listaUl.innerHTML = '';
             if (panelDetalle) panelDetalle.style.display = 'none';
 
-            carreras.forEach((carrera, index) => {
-                const liCarrera = document.createElement('li');
-                liCarrera.className = 'item-carrera';
-                liCarrera.innerHTML = `R${carrera.round} - ${carrera.raceName}`;
-                liCarrera.onclick = () => verDetalleSesion(index, 'carrera', liCarrera);
-                listaUl.appendChild(liCarrera);
-
-                const tieneSprint = sprints.find(s => s.round === carrera.round && s.SprintResults);
-                if (tieneSprint) {
-                    const liSprint = document.createElement('li');
-                    liSprint.className = 'item-carrera';
-                    liSprint.style.paddingLeft = '22px';
-                    liSprint.innerHTML = `↳ Sprint <span class="badge-sprint">Sprint</span>`;
-                    liSprint.onclick = () => verDetalleSesion(index, 'sprint', liSprint);
-                    listaUl.appendChild(liSprint);
-                }
-            });
-        }
-
-        function verDetalleSesion(indexCarrera, tipo) {
-            const carrera = carrerasCache[indexCarrera];
-            const tituloModal = document.getElementById('modal-titulo');
-            const subModal = document.getElementById('modal-subtitulo');
-            const tablaF1 = document.getElementById('modal-tabla-f1');
-            const tablaF15 = document.getElementById('modal-tabla-f15');
-
-            let resultadosBrutos = [];
-            let sistemaPuntos = [];
-
-            if (tipo === 'carrera') {
-                tituloModal.innerText = carrera.raceName;
-                subModal.innerText = `Resultados de la Carrera Principal`;
-                resultadosBrutos = carrera.Results || [];
-                sistemaPuntos = PUNTOS_CARRERA;
-            } else {
-                const sprintData = sprintsCache.find(s => s.round === carrera.round);
-                tituloModal.innerText = `${carrera.raceName} (Sprint)`;
-                subModal.innerText = `Resultados de la sesión Sprint corta`;
-                resultadosBrutos = sprintData ? (sprintData.SprintResults || []) : [];
-                sistemaPuntos = PUNTOS_SPRINT;
+            // Si no hay schedule, fallback al comportamiento original
+            if (!schedule || schedule.length === 0) {
+                carreras.forEach((carrera, index) => {
+                    const li = document.createElement('li');
+                    li.className = 'item-carrera';
+                    li.innerHTML = `R${carrera.round} - ${carrera.raceName}`;
+                    li.onclick = () => verDetalleFinDeSemanaCompleto(index);
+                    listaUl.appendChild(li);
+                    const sp = sprints.find(s => s.round === carrera.round && s.SprintResults);
+                    if (sp) {
+                        const liSp = document.createElement('li');
+                        liSp.className = 'item-carrera'; liSp.style.paddingLeft = '22px';
+                        liSp.innerHTML = `↳ Sprint <span class="badge-sprint">Sprint</span>`;
+                        liSp.onclick = () => verDetalleFinDeSemanaCompleto(index, 'sprint');
+                        listaUl.appendChild(liSp);
+                    }
+                });
+                return;
             }
 
-            let htmlF1 = '';
-            let htmlF15 = '';
+            // Encontrar próxima carrera y contadores
+            proximaCarreraIndex = encontrarProximaCarrera(schedule);
+            const total = schedule.length;
+            const completadas = carreras.length;
+            const restantes = proximaCarreraIndex >= 0 ? total - completadas : 0;
+
+            // Renderizar barra de estado (pills)
+            const estadoBar = document.createElement('div');
+            estadoBar.className = 'calendario-estado-bar';
+            estadoBar.innerHTML = `
+                <span class="estado-pill completadas">${completadas}/${total} GPs</span>
+                ${proximaCarreraIndex >= 0 ? `<span class="estado-pill proxima">${restantes} restantes</span>` : '<span class="estado-pill completadas">Temporada finalizada</span>'}
+            `;
+            listaUl.appendChild(estadoBar);
+
+            // Determinar si necesitamos separadores
+            const hayCompletadas = completadas > 0;
+            const hayFuturas = proximaCarreraIndex >= 0;
+            let primeraFuturaRenderizada = false;
+
+            // Iterar sobre el schedule completo (ordenado por round)
+            schedule.forEach((scheduleRace, scheduleIndex) => {
+                const ahora = new Date();
+                const fechaCarrera = new Date(`${scheduleRace.date}T${scheduleRace.time || '00:00:00Z'}`);
+                const esPasada = fechaCarrera < ahora;
+                const isProxima = scheduleIndex === proximaCarreraIndex;
+
+                // Separador antes de la primera futura
+                if (hayFuturas && !primeraFuturaRenderizada && !esPasada && !isProxima) {
+                    if (hayCompletadas) {
+                        const sep = document.createElement('li');
+                        sep.className = 'carrera-separador';
+                        sep.innerText = 'Próximas carreras';
+                        listaUl.appendChild(sep);
+                    }
+                    primeraFuturaRenderizada = true;
+                }
+
+                // Renderizar ítem de carrera
+                const li = document.createElement('li');
+
+                if (isProxima) {
+                    // PRÓXIMA CARRERA (highlight especial)
+                    li.className = 'item-carrera proxima-carrera';
+                    const fechaStr = formatearFechaSidebar(scheduleRace.date, scheduleRace.time);
+                    const fechaUTC = new Date(`${scheduleRace.date}T${scheduleRace.time || '00:00:00Z'}`);
+                    const countdown = calcularCountdown(fechaUTC);
+                    const urgenteClass = countdown.urgente ? 'urgente' : '';
+                    li.innerHTML = `
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span>R${scheduleRace.round} - ${scheduleRace.raceName}</span>
+                            <span class="badge-countdown ${urgenteClass}">${countdown.texto}</span>
+                        </div>
+                        <span class="futura-fecha">${fechaStr}</span>
+                    `;
+                    li.title = formatearFechaWidget(scheduleRace.date, scheduleRace.time);
+                    li.onclick = () => verDetalleFinDeSemanaCompleto(scheduleIndex);
+
+                    // Renderizar widget de próximo GP
+                    renderizarWidgetProximoGP(scheduleRace, countdown);
+
+                } else if (!esPasada) {
+                    // CARRERA FUTURA (no próxima)
+                    li.className = 'item-carrera futura';
+                    const fechaStr = formatearFechaSidebar(scheduleRace.date, scheduleRace.time);
+                    li.innerHTML = `R${scheduleRace.round} - ${scheduleRace.raceName}<span class="futura-fecha">${fechaStr}</span>`;
+                    li.title = formatearFechaWidget(scheduleRace.date, scheduleRace.time);
+                } else {
+                    // CARRERA PASADA (clickeable siempre)
+                    li.className = 'item-carrera';
+                    li.innerHTML = `R${scheduleRace.round} - ${scheduleRace.raceName}`;
+                    li.onclick = () => verDetalleFinDeSemanaCompleto(scheduleIndex);
+                }
+
+                listaUl.appendChild(li);
+
+                // Sprint item (si el schedule indica que tiene sprint)
+                const tieneSprintEnSchedule = !!scheduleRace.Sprint || !!scheduleRace.sprint;
+                if (tieneSprintEnSchedule) {
+                    const liSp = document.createElement('li');
+                    liSp.style.paddingLeft = '22px';
+                    
+                    if (esPasada || isProxima) {
+                        liSp.className = 'item-carrera';
+                        liSp.innerHTML = `↳ Sprint <span class="badge-sprint">Sprint</span>`;
+                        liSp.onclick = () => verDetalleFinDeSemanaCompleto(scheduleIndex, 'sprint');
+                    } else {
+                        liSp.className = 'item-carrera sprint-futura';
+                        liSp.innerHTML = `↳ Sprint`;
+                    }
+
+                    listaUl.appendChild(liSp);
+                }
+            });
+
+            // Auto-scroll a la próxima carrera
+            if (proximaCarreraIndex >= 0) {
+                setTimeout(() => {
+                    const proximoEl = listaUl.querySelector('.proxima-carrera');
+                    if (proximoEl) {
+                        proximoEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }, 300);
+            } else {
+                // Si no hay próxima carrera, ocultar widget
+                document.getElementById('widget-proximo-gp').style.display = 'none';
+            }
+        }
+
+        // ─── GESTIÓN DE DETALLE DE FIN DE SEMANA COMPLETO ───
+        let gpActualFull = null;
+
+        function obtenerEstadoSesion(fechaStr, horaStr, esProxima) {
+            const ahora = new Date();
+            const fechaSesion = new Date(`${fechaStr}T${horaStr || '00:00:00Z'}`);
+            if (fechaSesion < ahora) return { texto: 'FINALIZADA', css: 'status-finished' };
+            if (esProxima) return { texto: 'PRÓXIMA', css: 'status-today' };
+            if (fechaSesion.toDateString() === ahora.toDateString()) return { texto: 'HOY', css: 'status-today' };
+            return { texto: 'PROGRAMADA', css: 'status-scheduled' };
+        }
+
+        async function verDetalleFinDeSemanaCompleto(scheduleIndex, sessionInicial = 'race') {
+            const carrera = scheduleCache[scheduleIndex];
+            if (!carrera) return;
+            
+            console.log("Datos del Fin de Semana (GP):", carrera);
+
+            gpActualFull = { ...carrera, scheduleIndex };
+            cambiarApartado('detalle-gp');
+            
+            renderizarResumenCronograma(carrera);
+
+            const nameEl = document.getElementById('gp-full-name');
+            if (nameEl) nameEl.innerText = carrera.raceName;
+            
+            const subEl = document.getElementById('gp-full-sub');
+            if (subEl) subEl.innerText = `${carrera.Circuit.circuitName} • ${carrera.Circuit.Location.locality}, ${carrera.Circuit.Location.country}`;
+            
+            const flagEl = document.getElementById('gp-full-flag');
+            if (flagEl) flagEl.innerHTML = generarBanderaGPImg(carrera.Circuit.Location.country);
+
+            // Botón Compartir
+            const btnShare = document.getElementById('btn-share-gp');
+            if (btnShare) {
+                btnShare.onclick = () => {
+                    const url = `${window.location.origin}${window.location.pathname}?gp=${carrera.round}&year=${carrera.season}`;
+                    navigator.clipboard.writeText(url);
+                    btnShare.innerText = '✅ Copiado';
+                    setTimeout(() => btnShare.innerText = '🔗 Compartir', 2000);
+                };
+            }
+
+            // Generar Tabs de Sesiones ADAPTABLE (No hardcodeado)
+            const tabsContainer = document.getElementById('gp-session-tabs-container');
+            tabsContainer.innerHTML = '';
+
+            const sessionIds = {
+                FirstPractice: 'fp1',
+                SecondPractice: 'fp2',
+                ThirdPractice: 'fp3',
+                SprintQualifying: 'sprintqualifying',
+                Qualifying: 'qualifying',
+                Sprint: 'sprint',
+                Race: 'race'
+            };
+            const mappingLabels = {
+                FirstPractice: 'FP1',
+                SecondPractice: 'FP2',
+                ThirdPractice: 'FP3',
+                SprintQualifying: 'Sprint Shootout',
+                Qualifying: carrera.Sprint ? 'Qualy GP' : 'Clasificación',
+                Sprint: 'Sprint',
+                Race: 'Carrera'
+            };
+
+            let sesiones = Object.keys(sessionIds)
+                .filter(key => carrera[key] || (key === 'Race' && carrera.date))
+                .map(key => ({
+                    id: sessionIds[key],
+                    label: mappingLabels[key],
+                    data: key === 'Race' ? { date: carrera.date, time: carrera.time } : carrera[key]
+                }));
+
+            sesiones.sort((a, b) => {
+                const d1 = new Date(`${a.data.date}T${a.data.time || '00:00:00Z'}`);
+                const d2 = new Date(`${b.data.date}T${b.data.time || '00:00:00Z'}`);
+                return d1 - d2;
+            });
+
+            sesiones.forEach(s => {
+                if (s.data) {
+                    const btn = document.createElement('button');
+                    btn.className = 'session-tab-btn';
+                    btn.id = `btn-session-tab-${s.id}`;
+                    const countdown = calcularCountdown(new Date(`${s.data.date}T${s.data.time || '00:00:00Z'}`));
+                    const subtext = s.label === 'Carrera' ? '' : `<br><span style="font-size:0.6rem; opacity:0.7;">${countdown.texto}</span>`;
+                    btn.innerHTML = `${s.label}${subtext}`;
+                    btn.onclick = () => cargarDatosSesionGP(s.id, s.data);
+                    tabsContainer.appendChild(btn);
+                }
+            });
+
+            // Cargar sesión inicial
+            cargarDatosSesionGP(sessionInicial, sesiones.find(s => s.id === sessionInicial)?.data || { date: carrera.date, time: carrera.time });
+        }
+
+        function renderizarResumenCronograma(carrera) {
+            const container = document.getElementById('gp-schedule-summary');
+            if (!container) return;
+
+            const mapping = {
+                FirstPractice: 'FP1',
+                SecondPractice: 'FP2',
+                ThirdPractice: 'FP3',
+                SprintQualifying: 'Sprint Shootout',
+                Qualifying: carrera.Sprint ? 'Qualy GP' : 'Clasificación',
+                Sprint: 'Sprint',
+                Race: 'Carrera'
+            };
+
+            let items = Object.keys(mapping)
+                .filter(key => carrera[key] || (key === 'Race' && carrera.date))
+                .map(key => ({
+                    label: mapping[key],
+                    data: key === 'Race' ? { date: carrera.date, time: carrera.time } : carrera[key]
+                }));
+
+            // Ordenar cronológicamente antes de agrupar por día
+            items.sort((a, b) => {
+                const d1 = new Date(`${a.data.date}T${a.data.time || '00:00:00Z'}`);
+                const d2 = new Date(`${b.data.date}T${b.data.time || '00:00:00Z'}`);
+                return d1 - d2;
+            });
+
+            // Identificar la "próxima" sesión para resaltarla
+            const ahora = new Date();
+            const proximaSesionIndex = items.findIndex(item => {
+                const d = new Date(`${item.data.date}T${item.data.time || '00:00:00Z'}`);
+                return d > ahora;
+            });
+
+            // Agrupar eventos por día
+            const dias = {};
+            items.forEach((s, idx) => {
+                const d = new Date(`${s.data.date}T${s.data.time || '00:00:00Z'}`);
+                const diaNom = d.toLocaleDateString('es-ES', { weekday: 'long' });
+                const diaKey = diaNom.charAt(0).toUpperCase() + diaNom.slice(1);
+                if (!dias[diaKey]) dias[diaKey] = [];
+                const isNext = idx === proximaSesionIndex;
+                const estado = obtenerEstadoSesion(s.data.date, s.data.time, isNext);
+                dias[diaKey].push({ label: s.label, hora: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), estado, isNext });
+            });
+
+            let html = '<div class="schedule-summary-grid">';
+            for (const [dia, eventos] of Object.entries(dias)) {
+                html += `<div class="schedule-day-column"><div class="schedule-day-name">${dia}</div>`;
+                eventos.forEach(e => { 
+                    html += `<div class="schedule-event ${e.isNext ? 'is-next' : ''}">
+                                <span class="event-label">${e.label} <span class="session-status-pill ${e.estado.css}">${e.estado.texto}</span></span>
+                                <span class="event-time">${e.hora}</span>
+                             </div>`; 
+                });
+                html += `</div>`;
+            }
+            container.innerHTML = html + '</div>';
+        }
+
+        async function cargarDatosSesionGP(tipo, infoSesion) {
+            // UI Feedback
+            document.querySelectorAll('.session-tab-btn').forEach(b => b.classList.remove('active'));
+            const activeBtn = document.getElementById(`btn-session-tab-${tipo}`);
+            if (activeBtn) activeBtn.classList.add('active');
+
+            const container = document.getElementById('gp-session-body');
+            if (!container) return;
+
+            const title = document.getElementById('gp-session-title');
+            const dateEl = document.getElementById('gp-session-date');
+            
+            container.innerHTML = `
+                <div class="detalle-tablas-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px;">
+                    <div class="seccion-campeonato glass-panel" style="padding: 20px;">
+                        ${generarSkeletonTabla(12)}
+                    </div>
+                    <div class="seccion-campeonato glass-panel" style="padding: 20px;">
+                        ${generarSkeletonTabla(12)}
+                    </div>
+                </div>`;
+            
+            const titulosSesion = {
+                'fp1': 'PRÁCTICA LIBRE 1',
+                'fp2': 'PRÁCTICA LIBRE 2',
+                'fp3': 'PRÁCTICA LIBRE 3',
+                'qualifying': 'CLASIFICACIÓN',
+                'sprintqualifying': 'SPRINT SHOOTOUT',
+                'sprint': 'SPRINT',
+                'race': 'CARRERA'
+            };
+            if (title) title.innerText = titulosSesion[tipo] || 'SESIÓN';
+            if (dateEl) dateEl.innerText = infoSesion ? formatearFechaWidget(infoSesion.date, infoSesion.time) : '';
+
+            try {
+                const ano = gpActualFull.season;
+                const round = gpActualFull.round;
+                const cacheKey = `${ano}-${round}-${tipo}`;
+
+                // Futura carrera: Mostrar Meta-Data
+                const ahora = new Date();
+                const fechaSesion = new Date(`${infoSesion.date}T${infoSesion.time || '00:00:00Z'}`);
+                
+                if (fechaSesion > ahora) {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 40px; border: 1px dashed var(--border-soft); border-radius: 12px;">
+                            <h2 style="color: var(--accent-amber); margin-bottom: 10px;">Sesión Programada</h2>
+                            <p style="color: var(--text-muted);">Esta sesión aún no ha comenzado. Vuelve cuando finalice para ver los resultados.</p>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; text-align: left;">
+                                <div class="detalle-dato"><span>Formato</span><strong>${gpActualFull.Sprint ? 'Fin de semana Sprint' : 'Fin de semana Normal'}</strong></div>
+                                <div class="detalle-dato"><span>Ronda</span><strong>R${round}</strong></div>
+                            </div>
+                        </div>`;
+                    return;
+                }
+
+                // Cargar desde Caché
+                if (gpResultadosCache[cacheKey]) {
+                    container.innerHTML = gpResultadosCache[cacheKey];
+                    return;
+                }
+
+                let html = '';
+                if (tipo === 'race') {
+                    const res = await fetch(`https://api.jolpi.ca/ergast/f1/${ano}/${round}/results.json`);
+                    const data = await res.json();
+                    const resultados = data.MRData.RaceTable.Races[0]?.Results || [];
+                    html = renderizarTablaResultadosGP(resultados, PUNTOS_CARRERA);
+                } else if (tipo === 'qualifying') {
+                    const res = await fetch(`https://api.jolpi.ca/ergast/f1/${ano}/${round}/qualifying.json`);
+                    const data = await res.json();
+                    const resultados = data.MRData.RaceTable.Races[0]?.QualifyingResults || [];
+                    html = renderizarTablaQualyGP(resultados);
+                } else if (tipo === 'sprint') {
+                    const res = await fetch(`https://api.jolpi.ca/ergast/f1/${ano}/${round}/sprint.json`);
+                    const data = await res.json();
+                    const resultados = data.MRData.RaceTable.Races[0]?.SprintResults || [];
+                    html = renderizarTablaResultadosGP(resultados, PUNTOS_SPRINT);
+                } else if (tipo === 'sprintqualifying') {
+                    const res = await fetch(`https://api.jolpi.ca/ergast/f1/${ano}/${round}/sprintqualifying.json`);
+                    const data = await res.json();
+                    const resultados = data.MRData.RaceTable.Races[0]?.SprintQualifyingResults || [];
+                    html = renderizarTablaQualyGP(resultados);
+                } else {
+                    // Prácticas (FP1, FP2, FP3)
+                    html = `
+                        <div style="text-align: center; padding: 60px 40px; background: rgba(255,255,255,0.015); border-radius: 12px; border: 1px dashed var(--border-soft);">
+                            <div style="font-size: 2.5rem; margin-bottom: 15px;">⏱️</div>
+                            <div style="color: var(--text-soft); font-weight: 800; font-size: 1.1rem; text-transform: uppercase; letter-spacing: 1px;">Sesión de Prácticas Libres</div>
+                            <div style="color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; max-width: 500px; margin-left: auto; margin-right: auto;">Los resultados de telemetría de las prácticas no están disponibles en el histórico de la API Ergast.</div>
+                            <div style="background: rgba(246, 183, 60, 0.08); display: inline-block; padding: 8px 16px; border-radius: 6px; color: var(--accent-amber); font-size: 0.8rem; margin-top: 25px; text-transform: uppercase; font-weight: 800;">Realizada el: ${formatearFechaWidget(infoSesion.date, infoSesion.time)}</div>
+                        </div>
+                    `;
+                }
+
+                gpResultadosCache[cacheKey] = html;
+                container.innerHTML = html;
+            } catch (err) {
+                container.innerHTML = '<div class="loading-placeholder" style="color: var(--accent-red);">Error al conectar con la base de datos.</div>';
+            }
+        }
+
+        function renderizarTablaResultadosGP(resultados, sistemaPuntos) {
+            if (!resultados.length) return '<div class="loading-placeholder">Datos no disponibles para este año.</div>';
+            
+            let htmlF1 = '<h4 style="color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 15px;">Campeonato Oficial F1</h4><table><thead><tr><th class="pos">Pos</th><th>Piloto</th><th>Escudería</th><th class="pts">Pts</th></tr></thead><tbody>';
+            let htmlF15 = '<h4 style="color: var(--accent-f15); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 15px;">Campeonato F1.5 Mortales</h4><table><thead><tr><th class="pos">Pos</th><th>Piloto</th><th>Escudería</th><th class="pts">Pts</th></tr></thead><tbody>';
             let posF15 = 1;
 
-            resultadosBrutos.forEach(res => {
+            resultados.forEach(res => {
                 const nombre = `${res.Driver.givenName} ${res.Driver.familyName}`;
-                const escuderia = res.Constructor.name;
                 const flag = generarBanderaImg(res.Driver.nationality);
+                const esc = res.Constructor.name;
+                
+                htmlF1 += `<tr><td class="pos">${res.position}</td><td>${flag} <strong>${nombre}</strong></td><td style="color: var(--text-muted);">${esc}</td><td class="pts">${res.points}</td></tr>`;
 
-                htmlF1 += `<tr><td class="pos">${res.position}</td><td><div class="piloto-nombre-contenedor">${flag}<span><strong>${nombre}</strong><br><span style="font-size:0.7rem; color:#4b5563">${escuderia}</span></span></div></td><td class="pts">${res.points}</td></tr>`;
-
-                if (!esEquipoExcluidoF15(escuderia)) {
-                    const ptsF15 = posF15 <= sistemaPuntos.length ? sistemaPuntos[posF15 - 1] : 0;
-                    htmlF15 += `<tr><td class="pos">${posF15}</td><td><div class="piloto-nombre-contenedor">${flag}<span><strong>${nombre}</strong><br><span style="font-size:0.7rem; color:#4b5563">${escuderia}</span></span></div></td><td class="pts">${ptsF15}</td></tr>`;
+                if (!esEquipoExcluidoF15(esc)) {
+                    const pts = posF15 <= sistemaPuntos.length ? sistemaPuntos[posF15-1] : 0;
+                    htmlF15 += `<tr><td class="pos">${posF15}</td><td>${flag} <strong>${nombre}</strong></td><td style="color: var(--text-muted);">${esc}</td><td class="pts">${pts}</td></tr>`;
                     posF15++;
                 }
             });
 
-            tablaF1.innerHTML = htmlF1;
-            tablaF15.innerHTML = htmlF15;
-            document.getElementById('modal-carrera').style.display = 'flex';
-        }
+            htmlF1 += '</tbody></table>';
+            htmlF15 += '</tbody></table>';
 
-        function verDetalleSesion(indexCarrera, tipo, elementoSeleccionado) {
-            const carrera = carrerasCache[indexCarrera];
-            const panel = document.getElementById('detalle-carrera-panel');
-            const body = document.getElementById('detalle-carrera-body');
-
-            let resultadosBrutos = [];
-            let sistemaPuntos = [];
-            let titulo = carrera.raceName;
-            let tipoSesion = "Carrera principal";
-
-            if (tipo === 'carrera') {
-                resultadosBrutos = carrera.Results || [];
-                sistemaPuntos = PUNTOS_CARRERA;
-            } else {
-                const sprintData = sprintsCache.find(s => s.round === carrera.round);
-                titulo = `${carrera.raceName} (Sprint)`;
-                tipoSesion = "Sprint";
-                resultadosBrutos = sprintData ? (sprintData.SprintResults || []) : [];
-                sistemaPuntos = PUNTOS_SPRINT;
-            }
-
-            let htmlF1 = '';
-            let htmlF15 = '';
-            let posF15 = 1;
-            let ganadorF1 = resultadosBrutos[0];
-            let ganadorF15 = null;
-            let mejorVuelta = resultadosBrutos.find(res => res.FastestLap?.rank === "1") || resultadosBrutos.find(res => res.FastestLap?.Time?.time);
-            let vueltas = resultadosBrutos[0]?.laps || "-";
-            let topVueltas = [...resultadosBrutos]
-                .filter(res => res.FastestLap?.Time?.time)
-                .sort((a, b) => Number(a.FastestLap.rank || 99) - Number(b.FastestLap.rank || 99))
-                .slice(0, 5);
-
-            resultadosBrutos.forEach(res => {
-                const nombre = `${res.Driver.givenName} ${res.Driver.familyName}`;
-                const escuderia = res.Constructor.name;
-                const flag = generarBanderaImg(res.Driver.nationality);
-                const vueltaRapida = res.FastestLap?.Time?.time ? `<br><span style="font-size:0.7rem; color:#6b7280">VR ${res.FastestLap.Time.time}</span>` : '';
-
-                htmlF1 += `<tr><td class="pos">${res.position}</td><td><div class="piloto-nombre-contenedor">${flag}<span><strong>${nombre}</strong><br><span style="font-size:0.7rem; color:#4b5563">${escuderia}</span>${vueltaRapida}</span></div></td><td>${res.laps || '-'}</td><td class="pts">${res.points}</td></tr>`;
-
-                if (!esEquipoExcluidoF15(escuderia)) {
-                    if (!ganadorF15) ganadorF15 = res;
-                    const ptsF15 = posF15 <= sistemaPuntos.length ? sistemaPuntos[posF15 - 1] : 0;
-                    htmlF15 += `<tr><td class="pos">${posF15}</td><td><div class="piloto-nombre-contenedor">${flag}<span><strong>${nombre}</strong><br><span style="font-size:0.7rem; color:#4b5563">${escuderia}</span>${vueltaRapida}</span></div></td><td>${res.laps || '-'}</td><td class="pts">${ptsF15}</td></tr>`;
-                    posF15++;
-                }
-            });
-
-            const nombreGanadorF1 = ganadorF1 ? `${ganadorF1.Driver.givenName} ${ganadorF1.Driver.familyName}` : "-";
-            const nombreGanadorF15 = ganadorF15 ? `${ganadorF15.Driver.givenName} ${ganadorF15.Driver.familyName}` : "-";
-            const mejorVueltaTxt = mejorVuelta?.FastestLap?.Time?.time
-                ? `${mejorVuelta.FastestLap.Time.time} - ${mejorVuelta.Driver.givenName} ${mejorVuelta.Driver.familyName}`
-                : "-";
-            const promedioMejorVuelta = mejorVuelta?.FastestLap?.AverageSpeed?.speed
-                ? `${mejorVuelta.FastestLap.AverageSpeed.speed} ${mejorVuelta.FastestLap.AverageSpeed.units || 'kph'}`
-                : "-";
-            const fecha = carrera.date ? new Date(`${carrera.date}T${carrera.time || '00:00:00Z'}`).toLocaleDateString('es-AR') : "-";
-            const subtitulo = `${carrera.Circuit?.circuitName || 'Circuito'} - ${carrera.Circuit?.Location?.locality || ''}, ${carrera.Circuit?.Location?.country || ''}`;
-            const htmlTopVueltas = topVueltas.length ? topVueltas.map(res => `
-                <tr>
-                    <td>${res.FastestLap.rank || '-'}</td>
-                    <td>${generarBanderaImg(res.Driver.nationality)} <strong>${res.Driver.givenName} ${res.Driver.familyName}</strong></td>
-                    <td>${res.FastestLap.lap || '-'}</td>
-                    <td class="pts">${res.FastestLap.Time.time}</td>
-                </tr>
-            `).join('') : `<tr><td colspan="4" class="loading-placeholder">Sin datos de vueltas rapidas para esta sesion.</td></tr>`;
-
-            body.innerHTML = `
-                <div class="detalle-carrera-header">
-                    <div>
-                        <h2>${titulo}</h2>
-                        <div class="detalle-carrera-subtitulo">${subtitulo}</div>
-                    </div>
-                    <div class="detalle-carrera-badge">${tipoSesion}</div>
-                </div>
-
-                <div class="detalle-carrera-grid">
-                    <div class="detalle-dato"><span>Fecha</span><strong>${fecha}</strong></div>
-                    <div class="detalle-dato"><span>Vueltas</span><strong>${vueltas}</strong></div>
-                    <div class="detalle-dato"><span>Ganador F1</span><strong>${nombreGanadorF1}</strong></div>
-                    <div class="detalle-dato"><span>Ganador F1.5</span><strong>${nombreGanadorF15}</strong></div>
-                    <div class="detalle-dato"><span>Mejor vuelta</span><strong>${mejorVueltaTxt}</strong></div>
-                    <div class="detalle-dato"><span>Velocidad media</span><strong>${promedioMejorVuelta}</strong></div>
-                    <div class="detalle-dato"><span>Circuito</span><strong>${carrera.Circuit?.circuitName || '-'}</strong></div>
-                    <div class="detalle-dato"><span>Pais</span><strong>${carrera.Circuit?.Location?.country || '-'}</strong></div>
-                </div>
-
-                <div class="detalle-tablas-grid">
-                    <div>
-                        <h3>F1 Oficial</h3>
-                        <table><thead><tr><th class="pos">Pos</th><th>Piloto</th><th>Vueltas</th><th class="pts">Pts</th></tr></thead><tbody>${htmlF1}</tbody></table>
-                    </div>
-                    <div>
-                        <h3>F1.5 Mortales</h3>
-                        <table><thead><tr><th class="pos">Pos</th><th>Piloto</th><th>Vueltas</th><th class="pts">Pts</th></tr></thead><tbody>${htmlF15}</tbody></table>
-                    </div>
-                </div>
-
-                <div style="margin-top:18px;">
-                    <h3 style="color:#38bdf8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.5px; margin:0 0 10px;">Top vueltas rapidas</h3>
-                    <table><thead><tr><th>Rank</th><th>Piloto</th><th>Vuelta</th><th class="pts">Tiempo</th></tr></thead><tbody>${htmlTopVueltas}</tbody></table>
+            return `
+                <div class="detalle-tablas-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px;">
+                    <div class="seccion-campeonato glass-panel" style="padding: 20px;">${htmlF1}</div>
+                    <div class="seccion-campeonato glass-panel" style="padding: 20px;">${htmlF15}</div>
                 </div>
             `;
+        }
 
-            document.querySelectorAll('.item-carrera').forEach(item => item.classList.remove('active'));
-            if (elementoSeleccionado) elementoSeleccionado.classList.add('active');
-            panel.style.display = 'block';
-            panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        function renderizarTablaQualyGP(resultados) {
+            if (!resultados.length) return '<div class="loading-placeholder">Sin resultados de clasificación.</div>';
+            let html = '<table><thead><tr><th class="pos">Pos</th><th>Piloto</th><th>Escudería</th><th>Q1</th><th>Q2</th><th>Q3</th></tr></thead><tbody>';
+            
+            resultados.forEach(res => {
+                const nombre = `${res.Driver.givenName} ${res.Driver.familyName}`;
+                const flag = generarBanderaImg(res.Driver.nationality);
+                html += `
+                    <tr>
+                        <td class="pos">${res.position}</td>
+                        <td>${flag} <strong>${nombre}</strong></td>
+                        <td style="color: var(--text-muted); font-size: 0.8rem;">${res.Constructor.name}</td>
+                        <td style="font-family: monospace; font-weight: 700; color: var(--text-soft);">${res.Q1 || '-'}</td>
+                        <td style="font-family: monospace; font-weight: 700; color: var(--text-soft);">${res.Q2 || '-'}</td>
+                        <td style="font-family: monospace; font-weight: 700; color: var(--text-soft);">${res.Q3 || '-'}</td>
+                    </tr>
+                `;
+            });
+            html += '</tbody></table>';
+            return `
+                <div class="seccion-campeonato glass-panel" style="padding: 25px;">
+                    <h4 style="color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 20px;">Clasificación Oficial FIA</h4>
+                    ${html}
+                </div>
+            `;
         }
 
         function renderizarTablasDashboard(f1Pilotos, f15Pilotos, f1Const, f15Const) {
@@ -1106,9 +1483,60 @@
             }
         }
 
+        function actualizarContadorTicking() {
+            const el = document.getElementById('live-race-countdown');
+            if (!el) return;
+            
+            if (anioActual !== 'current' || proximaCarreraIndex === -1 || !scheduleCache || !scheduleCache[proximaCarreraIndex]) {
+                el.style.display = 'none';
+                return;
+            }
+
+            const proxima = scheduleCache[proximaCarreraIndex];
+            const fechaCarrera = new Date(`${proxima.date}T${proxima.time || '00:00:00Z'}`);
+            const ahora = new Date();
+            const diffMs = fechaCarrera - ahora;
+
+            if (diffMs <= 0) {
+                // Si el cartel está visible, disparamos la animación de desvanecimiento
+                if (el.style.display === 'flex' && !el.classList.contains('fade-out')) {
+                    el.classList.add('fade-out');
+                    // Esperamos a que termine la transición de 1s de CSS antes de quitar el display
+                    setTimeout(() => {
+                        el.style.display = 'none';
+                        el.classList.remove('fade-out');
+                    }, 1000);
+                } else if (!el.classList.contains('fade-out')) {
+                    el.style.display = 'none';
+                }
+                return;
+            }
+
+            const d = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            const h = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const m = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+            const s = Math.floor((diffMs % (1000 * 60)) / 1000);
+
+            el.innerHTML = `
+                <div class="session-badge" style="margin-bottom: 20px; scale: 1.5;">
+                    <span class="live-indicator"></span>
+                    <span style="font-size: 0.8rem; font-weight: 800; text-transform: uppercase; color: var(--text-muted);">Próxima Carrera: ${proxima.raceName}</span>
+                </div>
+                <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px;">Comienza en</div>
+                <div class="countdown-big-timer">${d}d ${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s</div>
+                <div style="color: var(--text-subtle); font-size: 0.9rem; max-width: 400px;">La telemetría en vivo se activará automáticamente cuando comience la sesión.</div>
+            `;
+            el.style.display = 'flex';
+        }
+
         async function iniciarLiveUpdates() {
             if (intervalLive) { clearInterval(intervalLive); intervalLive = null; }
+            if (intervalCountdownLive) { clearInterval(intervalCountdownLive); intervalCountdownLive = null; }
+
             await actualizarTimingEnVivo();
+            actualizarContadorTicking();
+            intervalCountdownLive = setInterval(actualizarContadorTicking, 1000);
+
             if (!modoDemoLive) {
                 intervalLive = setInterval(actualizarTimingEnVivo, 8000);
             }
@@ -1507,11 +1935,12 @@
             const infoDiv = document.getElementById('ultima-actualizacion');
 
             try {
-                const [resPilotos, resConst, carreras, sprints] = await Promise.all([
+                const [resPilotos, resConst, carreras, sprints, schedule] = await Promise.all([
                     fetch(apiPilotos),
                     fetch(apiConst),
                     obtenerCarrerasPaginadas(apiResultados, 'Results'),
-                    obtenerCarrerasPaginadas(apiSprints, 'SprintResults')
+                    obtenerCarrerasPaginadas(apiSprints, 'SprintResults'),
+                    obtenerScheduleCompleto("current")
                 ]);
 
                 const dPilotos = await resPilotos.json();
@@ -1519,6 +1948,7 @@
 
                 carrerasCache = carreras;
                 sprintsCache = sprints;
+                scheduleCache = schedule;
 
                 const f1Pilotos = dPilotos.MRData.StandingsTable.StandingsLists[0]?.DriverStandings || [];
                 const f1Const = dConst.MRData.StandingsTable.StandingsLists[0]?.ConstructorStandings || [];
@@ -1527,7 +1957,7 @@
                 f15PilotosCache = f15Calculado.listaPilotos;
 
                 renderizarTablasDashboard(f1Pilotos, f15PilotosCache, f1Const, f15Calculado.listaConst);
-                generarMenuCarreras(carrerasCache, sprintsCache);
+                generarMenuCarrerasMejorado(scheduleCache, carrerasCache, sprintsCache);
                 generarTablaCronica(carrerasCache, sprintsCache);
                 inicializarSelectorAnos();
 
@@ -2198,8 +2628,22 @@
         }
 
         // INICIALIZACIÓN DE PROCESOS
-        administrarVisitas();
-        cargarDatosLive();
-        setInterval(() => {
-            if (anioActual === "current") cargarDatosLive();
-        }, 300000);
+        // ─── MANEJO DE DEEP LINKING (Al cargar la página) ───
+        window.addEventListener('DOMContentLoaded', async () => {
+            administrarVisitas();
+            await cargarDatosLive();
+            
+            const params = new URLSearchParams(window.location.search);
+            const gpRound = params.get('gp');
+            const gpYear = params.get('year');
+
+            if (gpRound && gpYear) {
+                if (gpYear !== anioActual) await cambiarTemporadaHistorica(gpYear);
+                const idx = scheduleCache.findIndex(c => c.round === gpRound);
+                if (idx !== -1) verDetalleFinDeSemanaCompleto(idx);
+            }
+
+            setInterval(() => {
+                if (anioActual === "current") cargarDatosLive();
+            }, 300000);
+        });

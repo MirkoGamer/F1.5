@@ -31,6 +31,38 @@
         <button id="nav-tab-envivo" class="nav-tab" onclick="cambiarApartado('envivo')"><span class="live-indicator"></span>En Vivo</button>
     </div>
 
+    <!-- NUEVA SECCIÓN: DETALLE COMPLETO DEL FIN DE SEMANA -->
+    <div id="apartado-detalle-gp" style="width: 100%; display: none; flex-direction: column; align-items: center;">
+        <div class="gp-full-container glass-panel" style="width: 100%; max-width: 1200px; padding: 30px; border-radius: 12px; margin-top: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 25px; width: 100%;">
+                <div id="gp-header-info">
+                    <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                        <button class="back-btn" onclick="cambiarApartado('dashboard')">← Volver al Dashboard</button>
+                        <button id="btn-share-gp" class="back-btn" style="background: rgba(var(--accent-f15-rgb), 0.1); color: var(--accent-f15); border-color: rgba(var(--accent-f15-rgb), 0.2);">🔗 Compartir</button>
+                    </div>
+                    <h1 id="gp-full-name" style="margin: 0; font-size: 2.2rem; font-weight: 900; line-height: 1.1;">Nombre del GP</h1>
+                    <div id="gp-full-sub" style="color: var(--text-muted); font-weight: 600; font-size: 1rem; margin-top: 8px;">Circuito • Localidad</div>
+                </div>
+                <div id="gp-full-flag" style="scale: 2; transform-origin: right top; margin-top: 10px;"></div>
+            </div>
+
+            <!-- Resumen del cronograma del fin de semana -->
+            <div id="gp-schedule-summary" class="gp-schedule-summary"></div>
+
+            <div class="gp-session-tabs" id="gp-session-tabs-container">
+                <!-- Botones generados dinámicamente -->
+            </div>
+
+            <div id="gp-session-result-container">
+                <div class="session-result-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h3 id="gp-session-title" style="margin: 0; text-transform: uppercase; letter-spacing: 1px; color: var(--text-main);">Resultados de la Sesión</h3>
+                    <div id="gp-session-date" class="gp-session-date-badge">Día de la sesión</div>
+                </div>
+                <div id="gp-session-body"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="apartado-dashboard" style="width: 100%; display: flex; flex-direction: column; align-items: center;">
         <div class="dashboard-container">
             
@@ -46,6 +78,9 @@
                     <div id="detalle-carrera-body"></div>
                 </section>
                 
+                <!-- Widget Próximo Gran Premio (solo visible en temporada actual cuando hay carrera futura) -->
+                <div id="widget-proximo-gp" class="widget-proximo-gp glass-panel" style="display: none;"></div>
+
                 <div class="contenedor-widgets">
                     <div id="widget-lider" class="widget-lider glass-panel"></div>
                     <div id="widget-stats" class="widget-stats glass-panel">
@@ -132,7 +167,10 @@
         </div>
     </div>
 
-    <div id="apartado-envivo" style="width: 100%; display: none; flex-direction: column; align-items: center;">
+    <div id="apartado-envivo" style="width: 100%; display: none; flex-direction: column; align-items: center; position: relative; min-height: 80vh;">
+
+        <!-- Overlay de cuenta atrás que tapa todo el contenido -->
+        <div id="live-race-countdown" class="live-race-countdown-overlay" style="display: none;"></div>
 
         <!-- CABECERA DE SESIÓN + CONTROLES -->
         <div class="session-header-bar">
